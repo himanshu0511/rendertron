@@ -5,7 +5,6 @@ import * as koaCompress from 'koa-compress';
 import * as route from 'koa-route';
 import * as koaSend from 'koa-send';
 import * as path from 'path';
-import * as puppeteer from 'puppeteer';
 import * as url from 'url';
 
 import {Renderer, ScreenshotError} from './renderer';
@@ -32,8 +31,8 @@ export class Rendertron {
       this.config = Object.assign(this.config, await fse.readJson(CONFIG_PATH));
     }
 
-    const browser = await puppeteer.launch({args: ['--no-sandbox']});
-    this.renderer = new Renderer(browser);
+    // const browser = await puppeteer.launch({args: ['--no-sandbox']});
+    this.renderer = new Renderer();
 
     this.app.use(koaCompress());
 
