@@ -55,6 +55,54 @@ export class Renderer {
       }
     }
 
+    function modifyCSSStyleSheetPrototype() {
+        // const head = document.getElementsByTagName('head')[0];
+        // const script = document.createElement('script');
+        // script.type = 'text/javascript';
+        // script.innerHTML = 'const prototypeInsertRule = window.CSSStyleSheet.prototype.insertRule;/* @ts-ignore*/window.CSSStyleSheet.prototype.insertRule = function(){console.log(\'running\');/* @ts-ignore*/if (!this.styleRules) {/* @ts-ignore*/this.styleRules = [(Array.from(arguments))];} else {/* @ts-ignore*/this.styleRules.push(Array.from(arguments));}prototypeInsertRule.apply(this, Array.from(arguments));};';
+        // head.appendChild(script);
+
+        // @ts-ignore
+        // window.prototypeInsertRule = window.CSSStyleSheet.prototype.insertRule;
+        window.customCSSStyleSheetPrototypeFunctionMap = {};
+        // @ts-ignore
+        const keyDescriptionMap = Object.getOwnPropertyDescriptors(window.CSSStyleSheet.prototype);
+        // @ts-ignore
+        Object.getOwnPropertyNames(window.CSSStyleSheet.prototype).forEach((key) => {
+            // @ts-ignore
+            if (keyDescriptionMap[key].writable &&  typeof window.CSSStyleSheet.prototype[key] === 'function'){
+                // @ts-ignore
+                window.customCSSStyleSheetPrototypeFunctionMap[key] = window.CSSStyleSheet.prototype[key];
+                // @ts-ignore
+                window.CSSStyleSheet.prototype[key] = function() {
+                    const args = Array.from(arguments);
+                    const callLog = args.concat(key);
+                    if(this.functionCallLogs) {
+                        this.functionCallLogs.push(callLog);
+                    } else {
+                        this.functionCallLogs = [callLog];
+                    }
+                    // @ts-ignore
+                    return window.customCSSStyleSheetPrototypeFunctionMap[key].apply(this, args);
+                };
+            }
+        });
+        // @ts-ignore
+        // window.CSSStyleSheet.prototype.insertRule = function() {
+        //     console.log('running');
+        //     /* @ts-ignore*/
+        //     if (!this.styleRules) {
+        //         // @ts-ignore
+        //         this.styleRules = [(Array.from(arguments))];
+        //     } else {
+        //         // @ts-ignore
+        //         this.styleRules.push(Array.from(arguments));
+        //     }
+        //     // @ts-ignore
+        //     return window.prototypeInsertRule.apply(this, Array.from(arguments));
+        // };
+    }
+
     /**
      * Injects a <base> tag which allows other resources to load. This
      * has no effect on serialised output, but allows it to verify render
@@ -81,7 +129,30 @@ export class Renderer {
       const newIncognitoBrowserContext = await browser.createIncognitoBrowserContext();
       const page = await newIncognitoBrowserContext.newPage();
       await page.setRequestInterception(true);
+      await page.evaluateOnNewDocument(modifyCSSStyleSheetPrototype);
+      // @ts-ignore
+      //   const CSSStyleSheetPrototype = await page.evaluateHandle(() => window.CSSStyleSheet.prototype);//     const insertRule = window.CSSStyleSheet.prototype.insertRule;
+      //       // @ts-ignore
+      //   const insertRule = CSSStyleSheetPrototype.insertRule;
+      //   // @ts-ignore
+      //   console.log('runningbefore: ', typeof insertRule);
+      //   CSSStyleSheetPrototype.('insertRule = function(){
+      //           console.log('running');
+      //           // @ts-ignore
+      //           if (!this.styleRules) {
+      //               // @ts-ignore
+      //               this.styleRules = [(Array.from(arguments))];
+      //           } else {
+      //               // @ts-ignore
+      //               this.styleRules.push(Array.from(arguments));
+      //           }
+      //           insertRule.apply(this, Array.from(arguments));
+      //       };
+      // await page.evaluate(function(){
+          // @ts-ignore
+          // const insertRule = window.CSSStyleSheet.prototype.insertRule;/* @ts-ignore*/window.CSSStyleSheet.prototype.insertRule = function(){debugger;console.log('running');/* @ts-ignore*/if (!this.styleRules) {/* @ts-ignore*/this.styleRules = [(Array.from(arguments))];} else {/* @ts-ignore*/this.styleRules.push(Array.from(arguments));}insertRule.apply(this, Array.from(arguments));};
 
+      // });
       page.on('request', (interceptedRequest: Request) => {
         const interceptedUrl = interceptedRequest.url().split('?')[0];
         // console.log('interceptedUrl: ', interceptedUrl, 'allowed: ', interceptedUrl.match(allowedUrlsRegex) ? 'true' : false);
@@ -148,7 +219,7 @@ export class Renderer {
 
       // Page may reload when setting isMobile
       // https://github.com/GoogleChrome/puppeteer/blob/v1.10.0/docs/api.md#pagesetviewportviewport
-      await page.setViewport({width: 1000, height: 5000, isMobile});
+      await page.setViewport({width: 340, height: 640, isMobile});
 
       if (isMobile) {
         page.setUserAgent(MOBILE_USERAGENT);
@@ -217,17 +288,81 @@ export class Renderer {
       const parsedUrl = url.parse(requestUrl);
       await page.evaluate(
           injectBaseHref, `${parsedUrl.protocol}//${parsedUrl.host}`);
+      // await page.evaluate( () => {
+      //   const polyfillString = '!function(e,n,t){function r(e,n){return typeof e===n}function o(){var e,n,t,o,s,i,l;for(var a in C)if(C.hasOwnProperty(a)){if(e=[],n=C[a],n.name&&(e.push(n.name.toLowerCase()),n.options&&n.options.aliases&&n.options.aliases.length))for(t=0;t<n.options.aliases.length;t++)e.push(n.options.aliases[t].toLowerCase());for(o=r(n.fn,"function")?n.fn():n.fn,s=0;s<e.length;s++)i=e[s],l=i.split("."),1===l.length?Modernizr[l[0]]=o:(!Modernizr[l[0]]||Modernizr[l[0]]instanceof Boolean||(Modernizr[l[0]]=new Boolean(Modernizr[l[0]])),Modernizr[l[0]][l[1]]=o),x.push((o?"":"no-")+l.join("-"))}}function s(e){var n=S.className,t=Modernizr._config.classPrefix||"";if(_&&(n=n.baseVal),Modernizr._config.enableJSClass){var r=new RegExp("(^|\\\\s)"+t+"no-js(\\\\s|$)");n=n.replace(r,"$1"+t+"js$2")}Modernizr._config.enableClasses&&(n+=" "+t+e.join(" "+t),_?S.className.baseVal=n:S.className=n)}function i(e,n){return!!~(""+e).indexOf(n)}function l(){return"function"!=typeof n.createElement?n.createElement(arguments[0]):_?n.createElementNS.call(n,"http://www.w3.org/2000/svg",arguments[0]):n.createElement.apply(n,arguments)}function a(e){return e.replace(/([a-z])-([a-z])/g,function(e,n,t){return n+t.toUpperCase()}).replace(/^-/,"")}function f(e,n){return function(){return e.apply(n,arguments)}}function u(e,n,t){var o;for(var s in e)if(e[s]in n)return t===!1?e[s]:(o=n[e[s]],r(o,"function")?f(o,t||n):o);return!1}function d(e){return e.replace(/([A-Z])/g,function(e,n){return"-"+n.toLowerCase()}).replace(/^ms-/,"-ms-")}function c(n,t,r){var o;if("getComputedStyle"in e){o=getComputedStyle.call(e,n,t);var s=e.console;if(null!==o)r&&(o=o.getPropertyValue(r));else if(s){var i=s.error?"error":"log";s[i].call(s,"getComputedStyle returning null, its possible modernizr test results are inaccurate")}}else o=!t&&n.currentStyle&&n.currentStyle[r];return o}function p(){var e=n.body;return e||(e=l(_?"svg":"body"),e.fake=!0),e}function m(e,t,r,o){var s,i,a,f,u="modernizr",d=l("div"),c=p();if(parseInt(r,10))for(;r--;)a=l("div"),a.id=o?o[r]:u+(r+1),d.appendChild(a);return s=l("style"),s.type="text/css",s.id="s"+u,(c.fake?c:d).appendChild(s),c.appendChild(d),s.styleSheet?s.styleSheet.cssText=e:s.appendChild(n.createTextNode(e)),d.id=u,c.fake&&(c.style.background="",c.style.overflow="hidden",f=S.style.overflow,S.style.overflow="hidden",S.appendChild(c)),i=t(d,e),c.fake?(c.parentNode.removeChild(c),S.style.overflow=f,S.offsetHeight):d.parentNode.removeChild(d),!!i}function y(n,r){var o=n.length;if("CSS"in e&&"supports"in e.CSS){for(;o--;)if(e.CSS.supports(d(n[o]),r))return!0;return!1}if("CSSSupportsRule"in e){for(var s=[];o--;)s.push("("+d(n[o])+":"+r+")");return s=s.join(" or "),m("@supports ("+s+") { #modernizr { position: absolute; } }",function(e){return"absolute"==c(e,null,"position")})}return t}function g(e,n,o,s){function f(){d&&(delete E.style,delete E.modElem)}if(s=r(s,"undefined")?!1:s,!r(o,"undefined")){var u=y(e,o);if(!r(u,"undefined"))return u}for(var d,c,p,m,g,v=["modernizr","tspan","samp"];!E.style&&v.length;)d=!0,E.modElem=l(v.shift()),E.style=E.modElem.style;for(p=e.length,c=0;p>c;c++)if(m=e[c],g=E.style[m],i(m,"-")&&(m=a(m)),E.style[m]!==t){if(s||r(o,"undefined"))return f(),"pfx"==n?m:!0;try{E.style[m]=o}catch(h){}if(E.style[m]!=g)return f(),"pfx"==n?m:!0}return f(),!1}function v(e,n,t,o,s){var i=e.charAt(0).toUpperCase()+e.slice(1),l=(e+" "+P.join(i+" ")+i).split(" ");return r(n,"string")||r(n,"undefined")?g(l,n,o,s):(l=(e+" "+T.join(i+" ")+i).split(" "),u(l,n,t))}function h(e,n,r){return v(e,t,t,n,r)}var x=[],C=[],w={_version:"3.6.0",_config:{classPrefix:"",enableClasses:!0,enableJSClass:!0,usePrefixes:!0},_q:[],on:function(e,n){var t=this;setTimeout(function(){n(t[e])},0)},addTest:function(e,n,t){C.push({name:e,fn:n,options:t})},addAsyncTest:function(e){C.push({name:null,fn:e})}},Modernizr=function(){};Modernizr.prototype=w,Modernizr=new Modernizr;var S=n.documentElement,_="svg"===S.nodeName.toLowerCase(),b="Moz O ms Webkit",P=w._config.usePrefixes?b.split(" "):[];w._cssomPrefixes=P;var T=w._config.usePrefixes?b.toLowerCase().split(" "):[];w._domPrefixes=T;var z={elem:l("modernizr")};Modernizr._q.push(function(){delete z.elem});var E={style:z.elem.style};Modernizr._q.unshift(function(){delete E.style}),w.testAllProps=v,w.testAllProps=h,Modernizr.addTest("flexbox",h("flexBasis","1px",!0)),Modernizr.addTest("flexboxlegacy",h("boxDirection","reverse",!0)),Modernizr.addTest("flexboxtweener",h("flexAlign","end",!0)),Modernizr.addTest("flexwrap",h("flexWrap","wrap",!0)),o(),s(x),delete w.addTest,delete w.addAsyncTest;for(var N=0;N<Modernizr._q.length;N++)Modernizr._q[N]();e.Modernizr=Modernizr}(window,document);';
+      //   const head = document.getElementsByTagName('head')[0];
+      //   const script = document.createElement('script');
+      //   script.type = 'text/javascript';
+      //   script.innerHTML = polyfillString;
+      //   // script.onload = function() {
+      //   //   callFunctionFromScript();
+      //   // }
+      //   // script.src = 'path/to/your-script.js';
+      //   head.appendChild(script);
+      // });
+
+      // await page.evaluate( () => {
+      //   // const customStyleToInject = 'div[class^="styles__MainContainer-"] > div{flex-flow:row wrap;}section[class^="ProductCarousal__ProductImage"]{height:267px;}section[class^="ProductCarousal__ProductImage"] + div{flex-flow:row wrap;}';
+      //   const customStyleToInject = 'div[class^="Row-"]{flex-flow:row wrap;}div[class^="Col-"]{flex-flow:row wrap;}';
+      //   const head = document.getElementsByTagName('head')[0];
+      //   const style = document.createElement('style');
+      //     style.setAttribute('type', 'text/css');
+      //
+      //     if ('textContent' in style) {
+      //         style.textContent = customStyleToInject;
+      //     } else {
+      //         // @ts-ignore
+      //         style.styleSheet.cssText = customStyleToInject;
+      //     }
+      //   // style.type = 'text/css';
+      //   // style.innerHTML = customStyleToInject;
+      //   // script.onload = function() {
+      //   //   callFunctionFromScript();
+      //   // }
+      //   // script.src = 'path/to/your-script.js';
+      //   head.appendChild(style);
+      // });
       await page.evaluate(() => {
         Array.from(document.querySelectorAll('style')).forEach((style) => {
-          if (style.innerHTML === '') {
+        // @ts-ignore
+            if (style && style.sheet && style.sheet.functionCallLogs) {
+                // @ts-ignore
+                console.log(style.sheet.functionCallLogs);
+                // style.setAttribute('data-styles-rules', JSON.stringify(Array.from(style.sheet.rules).map((rule) => rule.cssText)));
+                // @ts-ignore
+                style.setAttribute('data-function-call-logs', JSON.stringify(style.sheet.functionCallLogs));
+            } else {
+                style.setAttribute('data-function-call-logs', JSON.stringify([]));
+            }
+          // if (style.innerHTML === '') {
             // @ts-ignore
-            style.innerHTML = Array.from(style.sheet.rules)
+            //   style.dataStyleRules = JSON.stringify(style.sheet.rules);
+            // console.log(style.dataset.styleRules);
+            // style.setAttribute('data-styles-rules', JSON.stringify(Array.from(style.sheet.rules).map((rule) => rule.cssText)));
             // @ts-ignore
-                .map((rule) => rule.cssText)
-                .join('');
-          }
+                // .replace(/flex-direction:\s?column;/, 'flex-direction: row;');
+
+              //      style.innerHTML = Array.from(style.sheet.rules)
+            // // @ts-ignore
+            //     .map((rule) => rule.cssText)
+            //     .join('');
+            //     // .replace(/flex-direction:\s?column;/, 'flex-direction: row;');
+          // }
         });
       });
+        await page.evaluate( () => {
+            // document.querySelectorAll('style').forEach((style) => {var rules = [];if (style && style.dataset && style.dataset.stylesRules){try{rules = JSON.parse(style.dataset.stylesRules);}catch(error){console.log('parsing error', error);}}console.log(rules);rules.forEach((args) =>{try{console.log('typeof args',typeof args);style.sheet.insertRule.apply(style.sheet, [args[0]])}catch(error){console.log('error executing insert rule', error)}});});
+            // document.querySelectorAll('style').forEach((style) => {try {if (style.dataStyleRules){style.setAttribute('css', 'randomcss');var rules = JSON.parse(style.dataStyleRules);style.style.rules = rules;}} catch(error){console.log('error Parsing rules' , error);}});
+            const head = document.getElementsByTagName('head')[0];
+            const script = document.createElement('script');
+            script.type = 'text/javascript';
+            script.innerHTML = 'document.querySelectorAll(\'style\').forEach((style) => {var rules = [];if (style && style.dataset && style.dataset.functionCallLogs){try{functionCallLogs = JSON.parse(style.dataset.functionCallLogs);}catch(error){console.log(\'parsing error\', error);}}console.log(rules);functionCallLogs.forEach((callLog) =>{try{console.log(callLog);const key = callLog.pop();style.sheet[key].apply(style.sheet, callLog)}catch(error){console.log(\`error executing function in sheet\`, error)}});});';
+            // script.onload = function() {
+            //   callFunctionFromScript();
+            // }
+            // script.src = 'path/to/your-script.js';
+            head.appendChild(script);
+        });
 
       // Serialize page.
       const result = await page.evaluate('document.firstElementChild.outerHTML');
