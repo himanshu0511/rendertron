@@ -6,7 +6,9 @@ import {Factory} from 'generic-pool';
 
 export default class BrowserPoolFactory implements Factory<BrowserWrapper> {
     private readonly puppeteerArgs: LaunchOptions = {
-        args: ['--no-sandbox']
+        args: ['--no-sandbox'],
+        // headless:false,
+        executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     };
     private readonly maxCount: number;
 

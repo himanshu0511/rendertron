@@ -193,7 +193,7 @@ export class Renderer {
 
       // Page may reload when setting isMobile
       // https://github.com/GoogleChrome/puppeteer/blob/v1.10.0/docs/api.md#pagesetviewportviewport
-      await page.setViewport({width: 340, height: 640, isMobile});
+      await page.setViewport({width: 360, height: 640, isMobile});
 
       if (isMobile) {
         page.setUserAgent(MOBILE_USERAGENT);
@@ -217,7 +217,7 @@ export class Renderer {
       try {
         // Navigate to page. Wait until there are no oustanding network requests.
         response = await page.goto(
-            requestUrl, {timeout: 10000, waitUntil: 'networkidle2'});
+            requestUrl, {timeout: 10000, waitUntil: 'networkidle0'});
       } catch (e) {
         console.error(e);
       }
@@ -279,18 +279,21 @@ export class Renderer {
       });
         // await page.evaluate(addModernizerScript);
         await page.evaluate( () => {
-            const head = document.getElementsByTagName('head')[0];
+            const head = document.getElementsByTagName('body')[0];
             const script = document.createElement('script');
             script.type = 'text/javascript';
-            script.innerHTML = 'document.querySelectorAll(\'style\').forEach((style) => {var rules = [];if (style && style.dataset && style.dataset.functionCallLogs){try{functionCallLogs = JSON.parse(style.dataset.functionCallLogs);}catch(error){console.log(\'parsing error\', error);}}console.log(rules);functionCallLogs.forEach((callLog) =>{try{console.log(callLog);const key = callLog.pop();style.sheet[key].apply(style.sheet, callLog)}catch(error){console.log(\`error executing function in sheet\`, error)}});});';
+            // script.innerHTML = 'setTimeout(() => {document.querySelectorAll(\'style\').forEach((style) => {var rules = [];if (style && style.dataset && style.dataset.functionCallLogs){try{functionCallLogs = JSON.parse(style.dataset.functionCallLogs);}catch(error){console.log(\'parsing error\', error);}}console.log(rules);functionCallLogs.forEach((callLog) =>{try{console.log(callLog);const key = callLog.pop();style.sheet[key].apply(style.sheet, callLog)}catch(error){console.log(\`error executing function in sheet\`, error)}});});},5000)';
+            script.innerHTML = 'document.querySelectorAll(\'style\').forEach((style) => {var rules = [];if (style && style.dataset && style.dataset.functionCallLogs){try{functionCallLogs = JSON.parse(style.dataset.functionCallLogs);}catch(error){console.log(\'parsing error\', error);}}functionCallLogs.forEach((callLog) =>{try{const key = callLog.pop();style.sheet[key].apply(style.sheet, callLog)}catch(error){console.log(\`error executing function in sheet\`, error)}});});';
             head.appendChild(script);
+            // @ts-ignore
+            document.querySelector('html').removeAttribute('class');
         });
 
       // Serialize page.
       const result = await page.evaluate('document.firstElementChild.outerHTML');
 
-      await page.close();
-      await newIncognitoBrowserContext.close();
+      // await page.close();
+      // await newIncognitoBrowserContext.close();
       return {status: statusCode, content: result};
     });
   }
