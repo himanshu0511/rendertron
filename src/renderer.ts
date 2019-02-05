@@ -60,7 +60,7 @@ export class Renderer {
         }
 
         function modifyCSSStyleSheetPrototype() {
-
+            // @ts-ignore
             window.customCSSStyleSheetPrototypeFunctionMap = {};
             // @ts-ignore
             const keyDescriptionMap = Object.getOwnPropertyDescriptors(window.CSSStyleSheet.prototype);
@@ -178,7 +178,7 @@ export class Renderer {
 
             // Page may reload when setting isMobile
             // https://github.com/GoogleChrome/puppeteer/blob/v1.10.0/docs/api.md#pagesetviewportviewport
-            await page.setViewport({width: 360, height: 640, isMobile});
+            await page.setViewport({width: 1000, height: 5000, isMobile});
 
             if (isMobile) {
                 page.setUserAgent(MOBILE_USERAGENT);
