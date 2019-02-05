@@ -60,14 +60,7 @@ export class Renderer {
         }
 
         function modifyCSSStyleSheetPrototype() {
-            // const head = document.getElementsByTagName('head')[0];
-            // const script = document.createElement('script');
-            // script.type = 'text/javascript';
-            // script.innerHTML = 'const prototypeInsertRule = window.CSSStyleSheet.prototype.insertRule;/* @ts-ignore*/window.CSSStyleSheet.prototype.insertRule = function(){console.log(\'running\');/* @ts-ignore*/if (!this.styleRules) {/* @ts-ignore*/this.styleRules = [(Array.from(arguments))];} else {/* @ts-ignore*/this.styleRules.push(Array.from(arguments));}prototypeInsertRule.apply(this, Array.from(arguments));};';
-            // head.appendChild(script);
 
-            // @ts-ignore
-            // window.prototypeInsertRule = window.CSSStyleSheet.prototype.insertRule;
             window.customCSSStyleSheetPrototypeFunctionMap = {};
             // @ts-ignore
             const keyDescriptionMap = Object.getOwnPropertyDescriptors(window.CSSStyleSheet.prototype);
@@ -123,8 +116,6 @@ export class Renderer {
             await page.evaluateOnNewDocument(modifyCSSStyleSheetPrototype);
             page.on('request', (interceptedRequest: Request) => {
                 const interceptedUrl = interceptedRequest.url().split('?')[0];
-                // console.log('interceptedUrl: ', interceptedUrl, 'allowed: ', interceptedUrl.match(allowedUrlsRegex) ? 'true' : false);
-                // if (!interceptedUrl.match(/.*\.(jpg|png|gif|jpeg)$/)){
                 if (interceptedUrl.endsWith('.jpg') || interceptedUrl.endsWith('.jpeg')) {
                     interceptedRequest.respond({
                         contentType: 'image/jpeg',
@@ -276,7 +267,6 @@ export class Renderer {
                 const head = document.getElementsByTagName('body')[0];
                 const script = document.createElement('script');
                 script.type = 'text/javascript';
-                // script.innerHTML = 'setTimeout(() => {document.querySelectorAll(\'style\').forEach((style) => {var rules = [];if (style && style.dataset && style.dataset.functionCallLogs){try{functionCallLogs = JSON.parse(style.dataset.functionCallLogs);}catch(error){console.log(\'parsing error\', error);}}console.log(rules);functionCallLogs.forEach((callLog) =>{try{console.log(callLog);const key = callLog.pop();style.sheet[key].apply(style.sheet, callLog)}catch(error){console.log(\`error executing function in sheet\`, error)}});});},5000)';
                 script.innerHTML = 'document.querySelectorAll(\'style\').forEach((style) => {var rules = [];if (style && style.dataset && style.dataset.functionCallLogs){try{functionCallLogs = JSON.parse(style.dataset.functionCallLogs);}catch(error){console.log(\'parsing error\', error);}}functionCallLogs.forEach((callLog) =>{try{const key = callLog.pop();style.sheet[key].apply(style.sheet, callLog)}catch(error){console.log(\`error executing function in sheet\`, error)}});});';
                 head.appendChild(script);
                 // @ts-ignore
