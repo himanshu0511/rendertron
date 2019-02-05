@@ -1,7 +1,8 @@
 import * as puppeteer from 'puppeteer';
+import * as fse from'fs-extra';
 import * as url from 'url';
 import {BrowserPool} from './browserPool';
-import {Browser} from 'puppeteer';
+import {Browser, Request, RespondOptions} from 'puppeteer';
 
 type SerializedResponse = {
   status: number; content: string;
@@ -19,9 +20,25 @@ const MOBILE_USERAGENT =
  */
 export class Renderer {
   private readonly browserPool: BrowserPool;
+  private responseCache: Record<string, RespondOptions> = {};
+  private responseCacheSize: number = 0;
+  private static readonly CACHE_EXPIRY = 24 * 60 * 60 * 1000; // 1 day cache
+  private static readonly ALLOWED_URL_PATTERN = /^https?:\/\/(.*?).?gozefo.com.*/;
+  private static readonly CACHE_URL_PATTERN = /^https?:\/\/(img[0-9]{0,2}).?gozefo.com.*/;
+  private responseCacheStartTimeStamp = (new Date()).getTime();
+  private blankJPG!: Buffer;
+  private blankPNG!: Buffer;
+  private blankGIF!: Buffer;
+  private blankSVG!: Buffer;
 
   constructor() {
     this.browserPool = new BrowserPool();
+  }
+  async initialize() {
+    this.blankGIF = await fse.readFile(`${__dirname}/../resources/blank.gif`);
+    this.blankPNG = await fse.readFile(`${__dirname}/../resources/blank.png`);
+    this.blankJPG = await fse.readFile(`${__dirname}/../resources/blank.jpg`);
+    this.blankSVG = await fse.readFile(`${__dirname}/../resources/blank.svg`);
   }
 
   async serialize(requestUrl: string, isMobile: boolean):
@@ -65,19 +82,73 @@ export class Renderer {
       const page = await newIncognitoBrowserContext.newPage();
       await page.setRequestInterception(true);
 
-    page.on('request', (interceptedRequest) => {
-      const interceptedUrl = interceptedRequest.url();
-      const allowedUrlsRegex = /^https?:\/\/(.*?).?gozefo.com.*/;
-      // console.log('interceptedUrl: ', interceptedUrl, 'allowed: ', interceptedUrl.match(allowedUrlsRegex) ? 'true' : false);
-      if (!interceptedUrl.match(allowedUrlsRegex))
-        interceptedRequest.abort();
-      else
-        interceptedRequest.continue();
-    });
+      page.on('request', (interceptedRequest: Request) => {
+        const interceptedUrl = interceptedRequest.url().split('?')[0];
+        // console.log('interceptedUrl: ', interceptedUrl, 'allowed: ', interceptedUrl.match(allowedUrlsRegex) ? 'true' : false);
+        // if (!interceptedUrl.match(/.*\.(jpg|png|gif|jpeg)$/)){
+        if (interceptedUrl.endsWith('.jpg') || interceptedUrl.endsWith('.jpeg')) {
+          interceptedRequest.respond({
+            contentType: 'image/jpeg',
+            body: this.blankJPG,
+          });
+        } else if (interceptedUrl.endsWith('.gif')) {
+          interceptedRequest.respond({
+            contentType: 'image/gif',
+            body: this.blankGIF,
+          });
+        }  else if (interceptedUrl.endsWith('.png')) {
+          interceptedRequest.respond({
+            contentType: 'image/png',
+            body: this.blankPNG,
+          });
+        } else if (interceptedUrl.endsWith('.svg')) {
+          interceptedRequest.respond({
+            contentType: 'image/png',
+            body: this.blankSVG,
+          });
+        } else if (!interceptedUrl.match(Renderer.ALLOWED_URL_PATTERN))
+          interceptedRequest.abort();
+        else if (interceptedUrl.match(Renderer.CACHE_URL_PATTERN)) {
+          if (this.responseCacheSize > 2000 || ((new Date()).getTime() - this.responseCacheStartTimeStamp) > Renderer.CACHE_EXPIRY) {
+            this.responseCache = {};
+            this.responseCacheSize = 0;
+            this.responseCacheStartTimeStamp = (new Date()).getTime();
+          }
+          // @ts-ignore
+          if (this.responseCache[interceptedUrl]) {
+            // console.log('from cached: ', interceptedUrl);
+            // @ts-ignore
+            interceptedRequest.respond(this.responseCache[interceptedUrl]);
+          } else {
+            interceptedRequest.continue().then(() => {
+              const response = interceptedRequest.response();
+              if (response) {
+                // @ts-ignore
+                const headers = response.headers();
+                response.buffer().then((buffer: Buffer) => {
+                  // console.log('caching: ', response.url());
+                  // @ts-ignore
+                  this.responseCache[response.url()] = {
+                    headers: headers,
+                    contentType: headers && headers['content-type'] ? headers['content-type'] : 'text/html',
+                    // @ts-ignore
+                    status: response.status(),
+                    // @ts-ignore
+                    body: buffer,
+                  };
+                  this.responseCacheSize++;
+                });
+              }
+            });
+          }
+        } else {
+          interceptedRequest.continue();
+        }
+      });
 
-    // Page may reload when setting isMobile
-    // https://github.com/GoogleChrome/puppeteer/blob/v1.10.0/docs/api.md#pagesetviewportviewport
-    await page.setViewport({width: 1000, height: 5000, isMobile});
+      // Page may reload when setting isMobile
+      // https://github.com/GoogleChrome/puppeteer/blob/v1.10.0/docs/api.md#pagesetviewportviewport
+      await page.setViewport({width: 1000, height: 5000, isMobile});
 
       if (isMobile) {
         page.setUserAgent(MOBILE_USERAGENT);
@@ -146,6 +217,17 @@ export class Renderer {
       const parsedUrl = url.parse(requestUrl);
       await page.evaluate(
           injectBaseHref, `${parsedUrl.protocol}//${parsedUrl.host}`);
+      await page.evaluate(() => {
+        Array.from(document.querySelectorAll('style')).forEach((style) => {
+          if (style.innerHTML === '') {
+            // @ts-ignore
+            style.innerHTML = Array.from(style.sheet.rules)
+            // @ts-ignore
+                .map((rule) => rule.cssText)
+                .join('');
+          }
+        });
+      });
 
       // Serialize page.
       const result = await page.evaluate('document.firstElementChild.outerHTML');
