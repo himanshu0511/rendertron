@@ -178,7 +178,7 @@ export class Renderer {
 
             // Page may reload when setting isMobile
             // https://github.com/GoogleChrome/puppeteer/blob/v1.10.0/docs/api.md#pagesetviewportviewport
-            await page.setViewport({width: 1000, height: 5000, isMobile});
+            await page.setViewport({width: (isMobile ? 400 : 1000), height: 5000, isMobile, hasTouch: isMobile, deviceScaleFactor: 1 });
 
             if (isMobile) {
                 page.setUserAgent(MOBILE_USERAGENT);
@@ -264,7 +264,7 @@ export class Renderer {
             });
             // await page.evaluate(addModernizerScript);
             await page.evaluate(() => {
-                const head = document.getElementsByTagName('body')[0];
+                const head = document.getElementsByTagName('head')[0];
                 const script = document.createElement('script');
                 script.type = 'text/javascript';
                 script.innerHTML = 'document.querySelectorAll(\'style\').forEach((style) => {var rules = [];if (style && style.dataset && style.dataset.functionCallLogs){try{functionCallLogs = JSON.parse(style.dataset.functionCallLogs);}catch(error){console.log(\'parsing error\', error);}}functionCallLogs.forEach((callLog) =>{try{const key = callLog.pop();style.sheet[key].apply(style.sheet, callLog)}catch(error){console.log(\`error executing function in sheet\`, error)}});});';
