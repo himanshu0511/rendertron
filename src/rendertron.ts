@@ -5,7 +5,6 @@ import * as koaCompress from 'koa-compress';
 import * as route from 'koa-route';
 import * as koaSend from 'koa-send';
 import * as path from 'path';
-import * as puppeteer from 'puppeteer';
 import * as url from 'url';
 
 import {Renderer, ScreenshotError} from './renderer';
@@ -15,6 +14,7 @@ const CONFIG_PATH = path.resolve(__dirname, '../config.json');
 type Config = {
   datastoreCache: boolean;
 };
+
 
 /**
  * Rendertron rendering service. This runs the server which routes rendering
@@ -28,12 +28,14 @@ export class Rendertron {
 
   async initialize() {
     // Load config.json if it exists.
+
     if (fse.pathExistsSync(CONFIG_PATH)) {
       this.config = Object.assign(this.config, await fse.readJson(CONFIG_PATH));
     }
 
-    const browser = await puppeteer.launch({args: ['--no-sandbox']});
-    this.renderer = new Renderer(browser);
+    // const browser = await puppeteer.launch({args: ['--no-sandbox']});
+    this.renderer = new Renderer();
+    await this.renderer.initialize();
 
     this.app.use(koaCompress());
 
