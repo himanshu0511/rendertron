@@ -112,11 +112,11 @@ export class Rendertron {
       ctx.status = 403;
       return;
     }
-    const dimensions = {
-      width: Number(ctx.query['width']) || 1000,
-      height: Number(ctx.query['height']) || 1000
-    };
     const mobileVersion = 'mobile' in ctx.query ? true : false;
+    const dimensions = {
+      width: Number(ctx.query['width']) || (mobileVersion ? 412 : 1000),
+      height: Number(ctx.query['height']) || 5000
+    };
 
     const serialized = await this.renderer.serialize(url, mobileVersion, dimensions);
     // Mark the response as coming from Rendertron.
