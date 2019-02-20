@@ -31,9 +31,9 @@ export class Rendertron {
       rendererConfig: {
         useIncognito: true,
         browserPoolConfig: {
-          browserMaxUse: 50,
+          browserMaxUse: 250,
           poolSettings: { // options for generic pool
-            idleTimeoutMillis: 300000,
+            idleTimeoutMillis: 3000000,
             max: 10,
             min: 2,
             testOnBorrow: true,
