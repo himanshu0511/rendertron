@@ -6,16 +6,18 @@ import * as route from 'koa-route';
 import * as koaSend from 'koa-send';
 import * as koaLogger from 'koa-logger';
 import * as path from 'path';
-import * as puppeteer from 'puppeteer';
 import * as url from 'url';
+import {merge} from 'lodash';
 
-import {Renderer, ScreenshotError} from './renderer';
+import {Renderer, RendererConfig, ScreenshotError} from './renderer';
 
 const CONFIG_PATH = path.resolve(__dirname, '../config.json');
 
-type Config = {
+export interface RendertronConfig {
   datastoreCache: boolean;
-};
+  rendererConfig: RendererConfig;
+}
+
 
 /**
  * Rendertron rendering service. This runs the server which routes rendering
@@ -23,18 +25,37 @@ type Config = {
  */
 export class Rendertron {
   app: Koa = new Koa();
-  config: Config = {datastoreCache: false};
+
+  config: RendertronConfig = {
+      datastoreCache: false,
+      rendererConfig: {
+        useIncognito: true,
+        browserPoolConfig: {
+          browserMaxUse: 250,
+          poolSettings: { // options for generic pool
+            idleTimeoutMillis: 3000000,
+            max: 10,
+            min: 2,
+            testOnBorrow: true,
+          },
+          browserArgs: {args: ['--no-sandbox']}
+        }
+      }
+  };
+
   private renderer: Renderer|undefined;
   private port = process.env.PORT || '3000';
 
   async initialize() {
     // Load config.json if it exists.
+
     if (fse.pathExistsSync(CONFIG_PATH)) {
-      this.config = Object.assign(this.config, await fse.readJson(CONFIG_PATH));
+      this.config = merge(this.config, await fse.readJson(CONFIG_PATH));
     }
 
-    const browser = await puppeteer.launch({args: ['--no-sandbox']});
-    this.renderer = new Renderer(browser);
+    this.renderer = new Renderer(this.config.rendererConfig);
+    // @ts-ignore
+    await this.renderer.initialize();
 
     this.app.use(koaLogger());
 
@@ -91,10 +112,13 @@ export class Rendertron {
       ctx.status = 403;
       return;
     }
-
     const mobileVersion = 'mobile' in ctx.query ? true : false;
+    const dimensions = {
+      width: Number(ctx.query['width']) || (mobileVersion ? 412 : 1000),
+      height: Number(ctx.query['height']) || 5000
+    };
 
-    const serialized = await this.renderer.serialize(url, mobileVersion);
+    const serialized = await this.renderer.serialize(url, mobileVersion, dimensions);
     // Mark the response as coming from Rendertron.
     ctx.set('x-renderer', 'rendertron');
     ctx.status = serialized.status;

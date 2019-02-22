@@ -1,13 +1,21 @@
 import * as puppeteer from 'puppeteer';
+import * as fse from 'fs-extra';
 import * as url from 'url';
+import {Browser, Request, RespondOptions} from 'puppeteer';
+import {BrowserPool, BrowserPoolConfig} from './browserPool';
 
 type SerializedResponse = {
-  status: number; content: string;
+    status: number; content: string;
 };
 
 type ViewportDimensions = {
-  width: number; height: number;
+    width: number; height: number;
 };
+
+export interface RendererConfig {
+    useIncognito: boolean;
+    browserPoolConfig: BrowserPoolConfig;
+}
 
 const MOBILE_USERAGENT =
     'Mozilla/5.0 (Linux; Android 8.0.0; Pixel 2 XL Build/OPD1.170816.004) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/68.0.3440.75 Mobile Safari/537.36';
@@ -17,185 +25,308 @@ const MOBILE_USERAGENT =
  * APIs that are able to handle web components and PWAs.
  */
 export class Renderer {
-  private browser: puppeteer.Browser;
+    private readonly browserPool: BrowserPool;
+    private readonly config: RendererConfig;
+    private responseCache: Record<string, RespondOptions> = {};
+    private responseCacheSize: number = 0;
+    private static readonly CACHE_EXPIRY = 24 * 60 * 60 * 1000; // 1 day cache
+    private static readonly ALLOWED_URL_PATTERN = /^https?:\/\/(.*?).?gozefo.com.*/;
+    private static readonly CACHE_URL_PATTERN = /^https?:\/\/(img[0-9]{0,2}).?gozefo.com.*/;
+    private responseCacheStartTimeStamp = (new Date()).getTime();
+    private blankJPG!: Buffer;
+    private blankPNG!: Buffer;
+    private blankGIF!: Buffer;
+    private blankSVG!: Buffer;
 
-  constructor(browser: puppeteer.Browser) {
-    this.browser = browser;
-  }
-
-  async serialize(requestUrl: string, isMobile: boolean):
-      Promise<SerializedResponse> {
-    /**
-     * Executed on the page after the page has loaded. Strips script and
-     * import tags to prevent further loading of resources.
-     */
-    function stripPage() {
-      // Strip only script tags that contain JavaScript (either no type attribute or one that contains "javascript")
-      const elements = document.querySelectorAll('script:not([type]), script[type*="javascript"], link[rel=import]');
-      for (const e of Array.from(elements)) {
-        e.remove();
-      }
+    constructor(config: RendererConfig) {
+        this.config = config;
+        this.browserPool = new BrowserPool(this.config.browserPoolConfig);
     }
 
-    /**
-     * Injects a <base> tag which allows other resources to load. This
-     * has no effect on serialised output, but allows it to verify render
-     * quality.
-     */
-    function injectBaseHref(origin: string) {
-      const base = document.createElement('base');
-      base.setAttribute('href', origin);
+    async initialize() {
+        this.blankGIF = await fse.readFile(`${__dirname}/../resources/blank.gif`);
+        this.blankPNG = await fse.readFile(`${__dirname}/../resources/blank.png`);
+        this.blankJPG = await fse.readFile(`${__dirname}/../resources/blank.jpg`);
+        this.blankSVG = await fse.readFile(`${__dirname}/../resources/blank.svg`);
+    }
 
-      const bases = document.head.querySelectorAll('base');
-      if (bases.length) {
-        // Patch existing <base> if it is relative.
-        const existingBase = bases[0].getAttribute('href') || '';
-        if (existingBase.startsWith('/')) {
-          bases[0].setAttribute('href', origin + existingBase);
+    private async _serialize(browser: Browser, requestUrl: string, isMobile: boolean, dimensions: ViewportDimensions): Promise<SerializedResponse> {
+        /**
+         * Executed on the page after the page has loaded. Strips script and
+         * import tags to prevent further loading of resources.
+         */
+        async function stripPage() {
+            // Strip only script tags that contain JavaScript (either no type attribute or one that contains "javascript")
+            const elements = document.querySelectorAll('script:not([type]), script[type*="javascript"], link[rel=import]');
+            for (const e of Array.from(elements)) {
+                e.remove();
+            }
         }
-      } else {
-        // Only inject <base> if it doesn't already exist.
-        document.head.insertAdjacentElement('afterbegin', base);
-      }
+
+        /**
+         * Injects a <base> tag which allows other resources to load. This
+         * has no effect on serialised output, but allows it to verify render
+         * quality.
+         */
+        async function injectBaseHref(origin: string) {
+            const base = document.createElement('base');
+            base.setAttribute('href', origin);
+
+            const bases = document.head.querySelectorAll('base');
+            if (bases.length) {
+                // Patch existing <base> if it is relative.
+                const existingBase = bases[0].getAttribute('href') || '';
+                if (existingBase.startsWith('/')) {
+                    bases[0].setAttribute('href', origin + existingBase);
+                }
+            } else {
+                // Only inject <base> if it doesn't already exist.
+                document.head.insertAdjacentElement('afterbegin', base);
+            }
+        }
+
+        let newIncognitoBrowserContext;
+        let page;
+        if (this.config.useIncognito) {
+            newIncognitoBrowserContext = await browser.createIncognitoBrowserContext();
+            page = await newIncognitoBrowserContext.newPage();
+        } else {
+            page = await browser.newPage();
+        }
+        await page.setRequestInterception(true);
+
+        page.on('request', (interceptedRequest: Request) => {
+            const interceptedUrl = interceptedRequest.url().split('?')[0];
+            // console.log('interceptedUrl: ', interceptedUrl, 'allowed: ', interceptedUrl.match(allowedUrlsRegex) ? 'true' : false);
+            // if (!interceptedUrl.match(/.*\.(jpg|png|gif|jpeg)$/)){
+            if (interceptedUrl.endsWith('.jpg') || interceptedUrl.endsWith('.jpeg')) {
+                interceptedRequest.respond({
+                    contentType: 'image/jpeg',
+                    body: this.blankJPG,
+                });
+            } else if (interceptedUrl.endsWith('.gif')) {
+                interceptedRequest.respond({
+                    contentType: 'image/gif',
+                    body: this.blankGIF,
+                });
+            } else if (interceptedUrl.endsWith('.png')) {
+                interceptedRequest.respond({
+                    contentType: 'image/png',
+                    body: this.blankPNG,
+                });
+            } else if (interceptedUrl.endsWith('.svg')) {
+                interceptedRequest.respond({
+                    contentType: 'image/png',
+                    body: this.blankSVG,
+                });
+            } else if (!interceptedUrl.match(Renderer.ALLOWED_URL_PATTERN))
+                interceptedRequest.abort();
+            else if (interceptedUrl.match(Renderer.CACHE_URL_PATTERN)) {
+                if (this.responseCacheSize > 2000 || ((new Date()).getTime() - this.responseCacheStartTimeStamp) > Renderer.CACHE_EXPIRY) {
+                    this.responseCache = {};
+                    this.responseCacheSize = 0;
+                    this.responseCacheStartTimeStamp = (new Date()).getTime();
+                }
+                // @ts-ignore
+                if (this.responseCache[interceptedUrl]) {
+                    // console.log('from cached: ', interceptedUrl);
+                    // @ts-ignore
+                    interceptedRequest.respond(this.responseCache[interceptedUrl]);
+                } else {
+                    interceptedRequest.continue().then(() => {
+                        const response = interceptedRequest.response();
+                        if (response) {
+                            // @ts-ignore
+                            const headers = response.headers();
+                            response.buffer().then((buffer: Buffer) => {
+                                // console.log('caching: ', response.url());
+                                // @ts-ignore
+                                this.responseCache[response.url()] = {
+                                    headers: headers,
+                                    contentType: headers && headers['content-type'] ? headers['content-type'] : 'text/html',
+                                    // @ts-ignore
+                                    status: response.status(),
+                                    // @ts-ignore
+                                    body: buffer,
+                                };
+                                this.responseCacheSize++;
+                            });
+                        }
+                    });
+                }
+            } else {
+                interceptedRequest.continue();
+            }
+        });
+        // Page may reload when setting isMobile
+        // https://github.com/GoogleChrome/puppeteer/blob/v1.10.0/docs/api.md#pagesetviewportviewport
+        await page.setViewport({width: dimensions.width, height: dimensions.height, isMobile});
+
+        if (isMobile) {
+            page.setUserAgent(MOBILE_USERAGENT);
+        }
+
+        page.evaluateOnNewDocument('customElements.forcePolyfill = true');
+        page.evaluateOnNewDocument('ShadyDOM = {force: true}');
+        page.evaluateOnNewDocument('ShadyCSS = {shimcssproperties: true}');
+
+        let response: puppeteer.Response | null = null;
+        // Capture main frame response. This is used in the case that rendering
+        // times out, which results in puppeteer throwing an error. This allows us
+        // to return a partial response for what was able to be rendered in that
+        // time frame.
+        page.addListener('response', (r: puppeteer.Response) => {
+            if (!response) {
+                response = r;
+            }
+        });
+
+        try {
+            // Navigate to page. Wait until there are no oustanding network requests.
+            response = await page.goto(
+                requestUrl, {timeout: 10000, waitUntil: 'networkidle2'});
+        } catch (e) {
+            console.error(e);
+        }
+
+        if (!response) {
+            console.error('response does not exist');
+            // This should only occur when the page is about:blank. See
+            // https://github.com/GoogleChrome/puppeteer/blob/v1.5.0/docs/api.md#pagegotourl-options.
+            return {status: 400, content: ''};
+        }
+
+        // Disable access to compute metadata. See
+        // https://cloud.google.com/compute/docs/storing-retrieving-metadata.
+        if (response.headers()['metadata-flavor'] === 'Google') {
+            return {status: 403, content: ''};
+        }
+
+        // Set status to the initial server's response code. Check for a <meta
+        // name="render:status_code" content="4xx" /> tag which overrides the status
+        // code.
+        let statusCode = response.status();
+        const newStatusCode =
+            await page
+                .$eval(
+                    'meta[name="render:status_code"]',
+                    (element) => parseInt(element.getAttribute('content') || ''))
+                .catch(() => undefined);
+        // On a repeat visit to the same origin, browser cache is enabled, so we may
+        // encounter a 304 Not Modified. Instead we'll treat this as a 200 OK.
+        if (statusCode === 304) {
+            statusCode = 200;
+        }
+        // Original status codes which aren't 200 always return with that status
+        // code, regardless of meta tags.
+        if (statusCode === 200 && newStatusCode) {
+            statusCode = newStatusCode;
+        }
+
+        // Remove script & import tags.
+        await page.evaluate(stripPage);
+        // Inject <base> tag with the origin of the request (ie. no path).
+        const parsedUrl = url.parse(requestUrl);
+        await page.evaluate(
+            injectBaseHref, `${parsedUrl.protocol}//${parsedUrl.host}`);
+        await page.evaluate(() => {
+            Array.from(document.querySelectorAll('style')).forEach((style) => {
+                if (style.innerHTML === '') {
+                    // @ts-ignore
+                    style.innerHTML = Array.from(style.sheet.rules)
+                    // @ts-ignore
+                        .map((rule) => rule.cssText)
+                        .join('');
+                }
+            });
+        });
+        await page.evaluate(() => {
+            // @ts-ignore
+            const classOnHTMLTag = document.querySelector('html').getAttribute('class').replace('async-hide', '');
+            // @ts-ignore
+            document.querySelector('html').setAttribute('class', classOnHTMLTag);
+        });
+        // Serialize page.
+        const result = await page.evaluate('document.firstElementChild.outerHTML');
+
+        await page.close();
+        if (newIncognitoBrowserContext) {
+            await newIncognitoBrowserContext.close();
+        }
+        return {status: statusCode, content: result};
     }
 
-    const page = await this.browser.newPage();
-
-    // Page may reload when setting isMobile
-    // https://github.com/GoogleChrome/puppeteer/blob/v1.10.0/docs/api.md#pagesetviewportviewport
-    await page.setViewport({width: 1000, height: 1000, isMobile});
-
-    if (isMobile) {
-      page.setUserAgent(MOBILE_USERAGENT);
+    public async serialize(requestUrl: string, isMobile: boolean, dimensions: ViewportDimensions): Promise<SerializedResponse> {
+        return await this.browserPool.acquire(async (browser: Browser) => {
+            return await this._serialize(browser, requestUrl, isMobile, dimensions);
+        });
     }
 
-    page.evaluateOnNewDocument('customElements.forcePolyfill = true');
-    page.evaluateOnNewDocument('ShadyDOM = {force: true}');
-    page.evaluateOnNewDocument('ShadyCSS = {shimcssproperties: true}');
+    private async _screenshot(browser: Browser, url: string, isMobile: boolean, dimensions: ViewportDimensions, options ?: object): Promise<Buffer> {
+        let newIncognitoBrowserContext;
+        let page;
+        if (this.config.useIncognito) {
+            newIncognitoBrowserContext = await browser.createIncognitoBrowserContext();
+            page = await newIncognitoBrowserContext.newPage();
+        } else {
+            page = await browser.newPage();
+        }
 
-    let response: puppeteer.Response|null = null;
-    // Capture main frame response. This is used in the case that rendering
-    // times out, which results in puppeteer throwing an error. This allows us
-    // to return a partial response for what was able to be rendered in that
-    // time frame.
-    page.addListener('response', (r: puppeteer.Response) => {
-      if (!response) {
-        response = r;
-      }
-    });
+        // Page may reload when setting isMobile
+        // https://github.com/GoogleChrome/puppeteer/blob/v1.10.0/docs/api.md#pagesetviewportviewport
+        await page.setViewport(
+            {width: dimensions.width, height: dimensions.height, isMobile});
 
-    try {
-      // Navigate to page. Wait until there are no oustanding network requests.
-      response = await page.goto(
-          requestUrl, {timeout: 10000, waitUntil: 'networkidle0'});
-    } catch (e) {
-      console.error(e);
+        if (isMobile) {
+            page.setUserAgent(MOBILE_USERAGENT);
+        }
+
+        let response: puppeteer.Response | null = null;
+
+        try {
+            // Navigate to page. Wait until there are no oustanding network requests.
+            response =
+                await page.goto(url, {timeout: 10000, waitUntil: 'networkidle2'});
+        } catch (e) {
+            console.error(e);
+        }
+
+        if (!response) {
+            throw new ScreenshotError('NoResponse');
+        }
+
+        // Disable access to compute metadata. See
+        // https://cloud.google.com/compute/docs/storing-retrieving-metadata.
+        if (response!.headers()['metadata-flavor'] === 'Google') {
+            throw new ScreenshotError('Forbidden');
+        }
+
+        // Must be jpeg & binary format.
+        const screenshotOptions =
+            Object.assign({}, options, {type: 'jpeg', encoding: 'binary'});
+        // Screenshot returns a buffer based on specified encoding above.
+        // https://github.com/GoogleChrome/puppeteer/blob/v1.8.0/docs/api.md#pagescreenshotoptions
+        const buffer = await page.screenshot(screenshotOptions) as Buffer;
+        return buffer;
     }
 
-    if (!response) {
-      console.error('response does not exist');
-      // This should only occur when the page is about:blank. See
-      // https://github.com/GoogleChrome/puppeteer/blob/v1.5.0/docs/api.md#pagegotourl-options.
-      return {status: 400, content: ''};
+    async screenshot(url: string, isMobile: boolean, dimensions: ViewportDimensions, options ?: object): Promise<Buffer> {
+        return await this.browserPool.acquire(async (browser: Browser) => {
+            return await this._screenshot(browser, url, isMobile, dimensions, options);
+        });
     }
-
-    // Disable access to compute metadata. See
-    // https://cloud.google.com/compute/docs/storing-retrieving-metadata.
-    if (response.headers()['metadata-flavor'] === 'Google') {
-      return {status: 403, content: ''};
-    }
-
-    // Set status to the initial server's response code. Check for a <meta
-    // name="render:status_code" content="4xx" /> tag which overrides the status
-    // code.
-    let statusCode = response.status();
-    const newStatusCode =
-        await page
-            .$eval(
-                'meta[name="render:status_code"]',
-                (element) => parseInt(element.getAttribute('content') || ''))
-            .catch(() => undefined);
-    // On a repeat visit to the same origin, browser cache is enabled, so we may
-    // encounter a 304 Not Modified. Instead we'll treat this as a 200 OK.
-    if (statusCode === 304) {
-      statusCode = 200;
-    }
-    // Original status codes which aren't 200 always return with that status
-    // code, regardless of meta tags.
-    if (statusCode === 200 && newStatusCode) {
-      statusCode = newStatusCode;
-    }
-
-    // Remove script & import tags.
-    await page.evaluate(stripPage);
-    // Inject <base> tag with the origin of the request (ie. no path).
-    const parsedUrl = url.parse(requestUrl);
-    await page.evaluate(
-        injectBaseHref, `${parsedUrl.protocol}//${parsedUrl.host}`);
-
-    // Serialize page.
-    const result = await page.evaluate('document.firstElementChild.outerHTML');
-
-    await page.close();
-    return {status: statusCode, content: result};
-  }
-
-  async screenshot(
-      url: string,
-      isMobile: boolean,
-      dimensions: ViewportDimensions,
-      options?: object): Promise<Buffer> {
-    const page = await this.browser.newPage();
-
-    // Page may reload when setting isMobile
-    // https://github.com/GoogleChrome/puppeteer/blob/v1.10.0/docs/api.md#pagesetviewportviewport
-    await page.setViewport(
-        {width: dimensions.width, height: dimensions.height, isMobile});
-
-    if (isMobile) {
-      page.setUserAgent(MOBILE_USERAGENT);
-    }
-
-    let response: puppeteer.Response|null = null;
-
-    try {
-      // Navigate to page. Wait until there are no oustanding network requests.
-      response =
-          await page.goto(url, {timeout: 10000, waitUntil: 'networkidle0'});
-    } catch (e) {
-      console.error(e);
-    }
-
-    if (!response) {
-      throw new ScreenshotError('NoResponse');
-    }
-
-    // Disable access to compute metadata. See
-    // https://cloud.google.com/compute/docs/storing-retrieving-metadata.
-    if (response!.headers()['metadata-flavor'] === 'Google') {
-      throw new ScreenshotError('Forbidden');
-    }
-
-    // Must be jpeg & binary format.
-    const screenshotOptions =
-        Object.assign({}, options, {type: 'jpeg', encoding: 'binary'});
-    // Screenshot returns a buffer based on specified encoding above.
-    // https://github.com/GoogleChrome/puppeteer/blob/v1.8.0/docs/api.md#pagescreenshotoptions
-    const buffer = await page.screenshot(screenshotOptions) as Buffer;
-    return buffer;
-  }
 }
 
-type ErrorType = 'Forbidden'|'NoResponse';
+type ErrorType = 'Forbidden' | 'NoResponse';
 
 export class ScreenshotError extends Error {
-  type: ErrorType;
+    type: ErrorType;
 
-  constructor(type: ErrorType) {
-    super(type);
+    constructor(type: ErrorType) {
+        super(type);
 
-    this.name = this.constructor.name;
+        this.name = this.constructor.name;
 
-    this.type = type;
-  }
+        this.type = type;
+    }
 }
