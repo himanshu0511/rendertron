@@ -203,8 +203,25 @@ Available configuration options:
             - `numTestsPerEvictionRun`: Number of resources to check each eviction run.  Default: 3.
             - `softIdleTimeoutMillis`: amount of time an object may sit idle in the pool before it is eligible for eviction by the idle object evictor (if any), with the extra condition that at least "min idle" object instances remain in the pool. Default -1 (nothing can get evicted)
             - `idleTimeoutMillis`: the minimum amount of time that an object may sit idle in the pool before it is eligible for eviction due to idle time. Supercedes `softIdleTimeoutMillis` Default: 30000
-        
-
+    * `allowedRequestUrlsRegex`: this attributes allow you to ignore all request not matching regex, it would be particularly beneficial in ignoring third party request
+    * `internalRequestCacheConfig`: this is config for caching of internal requests made by page. Cache used here is in memory LRU cache, where on breach of maxEntries least recently used values would be removed to accommodate new entries
+        Structure of internalRequestCacheConfig object:
+        ``` json
+          {
+              "cacheUrlRegex": "<regex for url patters whose response needs to be cached",
+              "imageCacheOptions": "BLANK_PIXEL",
+              "cacheExpiry": 10000,
+              "maxEntries": 2000
+            }
+        ```
+        * `cacheUrlRegex`: This defined regex for url pattern which should be cached
+        * `cacheExpiry`: This defines duration in milliseconds cache entry would be valid. This does not automatically removes entries at expiry time. But ensures cache is not used beyond expiry and entry is also deleted on fetching the entry beyond expiry.
+        * `maxEntries`: This defines max entries cache would maintain
+        * `imageCacheOptions`: This defines the way image request needed to be made.
+            Possible value is:
+            * i) 'BLANK_PIXEL', this make us respond with dummy data for image
+            * ii) 'IGNORE', this stops any request made for any image type
+            * iii) 'ALLOW', this would allow image requests to pass through, it could be cached or allowed to go through depending upon cacheUrlRegex regex
 
 ### Troubleshooting
 If you're having troubles with getting Headless Chrome to run in your

@@ -1,20 +1,39 @@
 import * as puppeteer from 'puppeteer';
+import {Request} from 'puppeteer';
 import * as url from 'url';
 import {BrowserPool, BrowserPoolConfig} from './browserPool';
 import {Browser} from 'puppeteer';
+import {RespondOptions} from 'puppeteer';
+// import * as fse from 'fs-extra';
+import InMemoryLRUCache from './InMemoryLRUCache';
+import {Response} from 'puppeteer';
 
-type SerializedResponse = {
+export type SerializedResponse = {
     status: number; content: string;
 };
 
-type ViewportDimensions = {
+export type ViewportDimensions = {
     width: number; height: number;
 };
 
 
+export type ImageResponseOption =
+    | 'BLANK_PIXEL'
+    | 'IGNORE'
+    | 'ALLOW';
+
+export interface ResponseCacheConfig {
+    maxEntries: number;
+    cacheExpiry?: number;
+    cacheUrlRegex: RegExp|string;
+    imageCacheOptions: ImageResponseOption;
+}
+
 export interface RendererConfig {
     useIncognito: boolean;
     browserPoolConfig: BrowserPoolConfig;
+    internalRequestCacheConfig?: ResponseCacheConfig;
+    allowedRequestUrlsRegex?: RegExp | string;
 }
 
 
@@ -28,11 +47,79 @@ const MOBILE_USERAGENT =
 export class Renderer {
     private readonly browserPool: BrowserPool;
     private readonly config: RendererConfig;
+    private cacheStore: InMemoryLRUCache<RespondOptions> = new InMemoryLRUCache<RespondOptions>();
+    private IMAGE_TYPES = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp'];
+    private imageRespondOptions = new Map<string, RespondOptions>();
 
     constructor(config: RendererConfig) {
         this.config = config;
         this.browserPool = new BrowserPool(this.config.browserPoolConfig);
+        if (this.config.internalRequestCacheConfig) {
+            this.cacheStore = new InMemoryLRUCache<RespondOptions>(this.config.internalRequestCacheConfig.maxEntries);
+            this.IMAGE_TYPES.forEach((extension) => {
+                const imageBuffer: Buffer = new Buffer('');
+                const respondOptions: RespondOptions = {
+                    contentType: `image/${extension}`,
+                    body: imageBuffer,
+                };
+                this.imageRespondOptions.set(extension, respondOptions);
+            });
+        }
     }
+
+    private async internalRequestCacheInterceptor(interceptedRequest: Request) {
+        if (this.config.internalRequestCacheConfig) {
+            const interceptedRequestFullUrl = interceptedRequest.url();
+            const interceptedUrl = interceptedRequest.url().split('?')[0] || '';
+            const extension = interceptedUrl.split('.').pop();
+            if (extension && this.IMAGE_TYPES.indexOf(extension) !== -1) {
+                if (this.config.internalRequestCacheConfig.imageCacheOptions === 'BLANK_PIXEL') {
+                    const respondOptions: RespondOptions | undefined = this.imageRespondOptions.get(extension);
+                    if (respondOptions) {
+                        await interceptedRequest.respond(respondOptions);
+                    } else {
+                        await interceptedRequest.continue();
+                    }
+                } else if (this.config.internalRequestCacheConfig.imageCacheOptions === 'IGNORE') {
+                    await interceptedRequest.abort();
+                } else {
+                    await interceptedRequest.continue();
+                }
+            } else if (interceptedUrl.match(this.config.internalRequestCacheConfig.cacheUrlRegex)) {
+                const cachedResponse = this.cacheStore.get(interceptedRequestFullUrl);
+                if (cachedResponse) {
+                    await interceptedRequest.respond(cachedResponse);
+                } else {
+                    await interceptedRequest.continue();
+                }
+            } else {
+                await interceptedRequest.continue();
+            }
+        }
+
+    }
+
+    private async internalResponseCacheInterceptor(response: Response) {
+        if (this.config.internalRequestCacheConfig && response) {
+            const url = response.url();
+            const interceptedUrl = url.split('?')[0] || '';
+            const extension = interceptedUrl.split('.').pop();
+            if (interceptedUrl.match(this.config.internalRequestCacheConfig.cacheUrlRegex) && (!extension || this.IMAGE_TYPES.indexOf(extension) === -1 || this.config.internalRequestCacheConfig.imageCacheOptions === 'ALLOW') && !this.cacheStore.get(url)) {
+                const headers = response.headers();
+                return await response.buffer().then((buffer: Buffer) => {
+                    this.cacheStore.set(url, {
+                        headers: headers,
+                        contentType: headers && headers['content-type'] ? headers['content-type'] : 'text/html',
+                        status: response.status(),
+                        body: buffer,
+                        // @ts-ignore
+                    }, this.config.internalRequestCacheConfig.cacheExpiry);
+                });
+            }
+        }
+    }
+
+
 
     private async _serialize(browser: Browser, requestUrl: string, isMobile: boolean, dimensions: ViewportDimensions) {
         /**
@@ -81,6 +168,25 @@ export class Renderer {
         // https://github.com/GoogleChrome/puppeteer/blob/v1.10.0/docs/api.md#pagesetviewportviewport
         await page.setViewport({width: dimensions.width, height: dimensions.height, isMobile});
 
+        if (this.config.internalRequestCacheConfig) {
+            await page.setRequestInterception(true);
+            page.on('request', async (interceptedRequest: Request) => {
+                if (this.config.allowedRequestUrlsRegex) {
+                    if (interceptedRequest.url().match(this.config.allowedRequestUrlsRegex)) {
+                        if (this.internalRequestCacheInterceptor) {
+                            await this.internalRequestCacheInterceptor(interceptedRequest);
+                        } else {
+                            interceptedRequest.continue();
+                        }
+                    } else {
+                        await interceptedRequest.abort();
+                    }
+                } else {
+                    await interceptedRequest.continue();
+                }
+            });
+        }
+
         if (isMobile) {
             page.setUserAgent(MOBILE_USERAGENT);
         }
@@ -94,9 +200,12 @@ export class Renderer {
         // times out, which results in puppeteer throwing an error. This allows us
         // to return a partial response for what was able to be rendered in that
         // time frame.
-        page.addListener('response', (r: puppeteer.Response) => {
+        page.addListener('response', async (r: puppeteer.Response) => {
             if (!response) {
                 response = r;
+            }
+            if (this.config.internalRequestCacheConfig) {
+                await this.internalResponseCacheInterceptor(r);
             }
         });
 
@@ -189,7 +298,7 @@ export class Renderer {
         try {
             // Navigate to page. Wait until there are no oustanding network requests.
             response =
-                await page.goto(url, {timeout: 10000, waitUntil: 'networkidle2'});
+                await page.goto(url, {timeout: 10000, waitUntil: 'networkidle0'});
         } catch (e) {
             console.error(e);
         }
@@ -210,10 +319,6 @@ export class Renderer {
         // Screenshot returns a buffer based on specified encoding above.
         // https://github.com/GoogleChrome/puppeteer/blob/v1.8.0/docs/api.md#pagescreenshotoptions
         const buffer = await page.screenshot(screenshotOptions) as Buffer;
-        await page.close();
-        if (newIncognitoBrowserContext) {
-            await newIncognitoBrowserContext.close();
-        }
         return buffer;
     }
 
