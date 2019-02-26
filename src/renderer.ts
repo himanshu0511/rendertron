@@ -258,6 +258,17 @@ export class Renderer {
         await page.evaluate(
             injectBaseHref, `${parsedUrl.protocol}//${parsedUrl.host}`);
 
+        await page.evaluate(() => {
+            Array.from(document.querySelectorAll('style')).forEach((style) => {
+                if (style.innerHTML === '') {
+                    // @ts-ignore
+                    style.innerHTML = Array.from(style.sheet.rules)
+                    // @ts-ignore
+                        .map((rule) => rule.cssText)
+                        .join('');
+                }
+            });
+        });
         // Serialize page.
         const result = await page.evaluate('document.firstElementChild.outerHTML');
 
@@ -303,6 +314,18 @@ export class Renderer {
             console.error(e);
         }
 
+        await page.evaluate(() => {
+            Array.from(document.querySelectorAll('style')).forEach((style) => {
+                if (style.innerHTML === '') {
+                    // @ts-ignore
+                    style.innerHTML = Array.from(style.sheet.rules)
+                    // @ts-ignore
+                        .map((rule) => rule.cssText)
+                        .join('');
+                }
+            });
+        });
+
         if (!response) {
             throw new ScreenshotError('NoResponse');
         }
@@ -319,6 +342,10 @@ export class Renderer {
         // Screenshot returns a buffer based on specified encoding above.
         // https://github.com/GoogleChrome/puppeteer/blob/v1.8.0/docs/api.md#pagescreenshotoptions
         const buffer = await page.screenshot(screenshotOptions) as Buffer;
+        await page.close();
+        if (newIncognitoBrowserContext) {
+            await newIncognitoBrowserContext.close();
+        }
         return buffer;
     }
 
