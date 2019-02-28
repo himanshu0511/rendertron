@@ -1,9 +1,9 @@
 {
-  "name": "rendertron",
-  "version": "2.0.1",
-  "description": "Renders webpages using headless Chrome for usage by bots",
+  "name": "rendertron-enhanced",
+  "version": "1.0.0",
+  "description": "Renders page using headless Chrome for usage by bots.",
   "license": "Apache-2.0",
-  "repository": "https://github.com/GoogleChrome/rendertron",
+  "repository": "https://github.com/himanshu0511/rendertron",
   "engines": {
     "node": ">=7"
   },
